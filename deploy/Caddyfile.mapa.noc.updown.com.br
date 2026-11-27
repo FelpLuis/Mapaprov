@@ -1,0 +1,23 @@
+# Mapaprov (Fiber 3D) — copie este bloco para o /etc/caddy/Caddyfile do servidor
+# e rode: sudo systemctl reload caddy
+mapa.noc.updown.com.br {
+	root * /opt/mapaprov/public
+	encode zstd gzip
+	file_server
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		X-Frame-Options "DENY"
+		# Fontes externas do mapa: OpenFreeMap (ruas/prédios), Esri (satélite), AWS (relevo),
+		# Overpass (postes/bairros OSM), IBGE (limite municipal), Nominatim (busca de endereço)
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; child-src 'self' blob:; img-src 'self' data: blob: https://tiles.openfreemap.org https://server.arcgisonline.com https://s3.amazonaws.com; connect-src 'self' https://tiles.openfreemap.org https://server.arcgisonline.com https://s3.amazonaws.com https://overpass-api.de https://servicodados.ibge.gov.br https://nominatim.openstreetmap.org; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		-Server
+	}
+
+	@static path /vendor/*
+	header @static Cache-Control "public, max-age=604800"
+	@app path / /index.html /js/* /css/*
+	header @app Cache-Control "no-cache"
+}
