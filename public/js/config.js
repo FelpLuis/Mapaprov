@@ -19,6 +19,8 @@ export const SOURCES = {
   terrain: 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
   overpass: 'https://overpass-api.de/api/interpreter',
   nominatim: 'https://nominatim.openstreetmap.org/search',
+  mapillary: 'https://graph.mapillary.com/map_features',
+  streetView: (key, lat, lng, heading) => `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${lat},${lng}&fov=85&pitch=8${heading != null ? `&heading=${Math.round(heading)}` : ''}&language=pt-BR`,
   ibge: (code) => `https://servicodados.ibge.gov.br/api/v3/malhas/municipios/${code}?formato=application/vnd.geo+json&qualidade=maxima`,
 };
 

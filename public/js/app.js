@@ -7,6 +7,7 @@ import { readKmlFile, parseKml, snapCables, toKml, toKmz, toGeoJSON } from './km
 import { cableLength, powerBudget, materials, materialsCsv } from './analysis.js';
 import { openSplice } from './splice.js';
 import { h, clear, toast, modal, download, pickFile, field, select } from './ui.js';
+import { enableGoogle3D, disableGoogle3D, googleActive } from './google3d.js';
 
 /* global maplibregl */
 maplibregl.setWorkerUrl(new URL('../vendor/maplibre-gl-csp-worker.js', import.meta.url).href);
@@ -14,9 +15,15 @@ maplibregl.setWorkerUrl(new URL('../vendor/maplibre-gl-csp-worker.js', import.me
 const PREFS_KEY = 'fiber3d.prefs.v1';
 const prefs = Object.assign({
   satellite: false, terrain: true, exaggeration: 1.2, buildings: true, boundary: true, labels: true, scale3d: 3,
+  google3d: false, googleZ: 0, googleKey: '', mapillaryToken: '',
   hiddenKinds: [], hiddenCables: [], autoPoles: true, cableTipo: 'distribuicao', cableFibras: 12, cableLanc: 'aereo', view: null,
 }, (() => { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ } };
+
+// chaves compartilhadas pela equipe: arquivo opcional public/config.json no servidor (fora do git)
+const siteConfig = await fetch('config.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+const googleKey = () => (prefs.googleKey || siteConfig.googleMapsKey || '').trim();
+const mapillaryToken = () => (prefs.mapillaryToken || siteConfig.mapillaryToken || '').trim();
 
 const state = {
   tool: 'select',          // select | add:<kind> | cable | drop | measure
@@ -69,10 +76,12 @@ map.addControl(new maplibregl.FullscreenControl(), 'top-right');
 window.fiberMap = map; // útil para depuração no console
 
 const EMPTY = { type: 'FeatureCollection', features: [] };
+let baseLayerIds = [];
 
 function firstLayer(pred) { return map.getStyle().layers.find(pred)?.id; }
 
 map.on('load', () => {
+  baseLayerIds = map.getStyle().layers.map((l) => l.id);
   // satélite (Esri World Imagery) abaixo das ruas e rótulos
   map.addSource('sat', { type: 'raster', tiles: [SOURCES.satellite], tileSize: 256, maxzoom: 19, attribution: 'Imagens © Esri, Maxar, Earthstar Geographics' });
   const beforeSat = firstLayer((l) => l['source-layer'] === 'transportation' || l.type === 'symbol' || l.type === 'fill-extrusion');
@@ -129,6 +138,8 @@ map.on('load', () => {
   }
   map.addLayer({ id: 'draft-line', type: 'line', source: 'draft', paint: { 'line-color': '#22d3ee', 'line-width': 3, 'line-dasharray': [1.5, 1] } });
   map.addLayer({ id: 'draft-pt', type: 'circle', source: 'draft', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-color': '#22d3ee', 'circle-radius': 4, 'circle-stroke-color': '#0f172a', 'circle-stroke-width': 1 } });
+  map.addSource('sv', { type: 'geojson', data: EMPTY });
+  map.addLayer({ id: 'sv', type: 'circle', source: 'sv', paint: { 'circle-color': '#facc15', 'circle-radius': 8, 'circle-stroke-color': '#0f172a', 'circle-stroke-width': 3, 'circle-pitch-alignment': 'map' } });
   map.addLayer({ id: 'handles', type: 'circle', source: 'handles', paint: { 'circle-color': '#fff', 'circle-radius': 6, 'circle-stroke-color': '#0891b2', 'circle-stroke-width': 2.5, 'circle-pitch-alignment': 'map' } });
 
   applyBuildings();
@@ -138,7 +149,70 @@ map.on('load', () => {
   renderTab();
   updateStatus();
   if (!state.basemapOk) toast('Mapa base vetorial indisponível — usando imagem de satélite.', 'warn', 6000);
+  if (prefs.google3d) applyGoogleMode();
 });
+
+/* ------------------------------------------------------- modo realista (Google) ------------------------------------------------------- */
+
+const credits = document.getElementById('g-credits');
+
+async function applyGoogleMode() {
+  const on = prefs.google3d && !!googleKey();
+  if (on && !googleActive()) {
+    // o conteúdo do Google não é misturado com outros mapas base: esconde OSM/satélite/relevo
+    for (const id of baseLayerIds) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+    map.setLayoutProperty('sat', 'visibility', 'none');
+    map.setLayoutProperty('hillshade', 'visibility', 'none');
+    map.setTerrain(null);
+    credits.hidden = false;
+    clear(credits, h('b', null, 'Google'), h('span', null, ''));
+    try {
+      await enableGoogle3D(map, {
+        key: googleKey(),
+        beforeId: 'cable-casing',
+        onCredits: (t) => { credits.lastChild.textContent = t ? ` · ${t}` : ''; },
+        onError: (msg) => toast(`Google 3D: ${msg}. Confira a chave e se a "Map Tiles API" está ativada no Google Cloud.`, 'error', 10000),
+      });
+      if (map.getPitch() < 40) map.easeTo({ pitch: 60 });
+    } catch (err) {
+      toast(`Não foi possível ativar o modo realista: ${err.message}`, 'error', 8000);
+      prefs.google3d = false; savePrefs(); applyGoogleMode();
+    }
+  } else if (!on && googleActive()) {
+    disableGoogle3D(map);
+    credits.hidden = true;
+    for (const id of baseLayerIds) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'visible');
+    if (!state.basemapOk && map.getLayer('bg')) map.setLayoutProperty('bg', 'visibility', 'visible');
+    map.setLayoutProperty('sat', 'visibility', prefs.satellite ? 'visible' : 'none');
+    applyBuildings();
+    applyLabels();
+    applyTerrain();
+  }
+  refreshMap();
+}
+
+/* ------------------------------------------------------------- Street View ------------------------------------------------------------ */
+
+const sv = document.getElementById('sv');
+const svFrame = document.getElementById('sv-frame');
+const svTitle = document.getElementById('sv-title');
+document.getElementById('sv-close').onclick = () => { sv.hidden = true; svFrame.src = 'about:blank'; map.getSource('sv')?.setData(EMPTY); };
+
+function openStreetView(lngLat, label) {
+  const [lng, lat] = lngLat;
+  const ext = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
+  if (!googleKey()) {
+    window.open(ext, '_blank', 'noopener');
+    toast('Para ver o Street View dentro do mapa, cadastre a chave do Google em Camadas → Chaves de API.', 'warn', 7000);
+    return;
+  }
+  // olha na direção em que a câmera do mapa está apontando
+  svFrame.src = SOURCES.streetView(googleKey(), lat, lng, (map.getBearing() + 360) % 360);
+  svTitle.textContent = label || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  document.getElementById('sv-ext').href = ext;
+  sv.hidden = false;
+  map.getSource('sv')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: {} }] });
+}
 
 function applyTerrain() {
   if (prefs.terrain) map.setTerrain({ source: 'dem', exaggeration: Number(prefs.exaggeration) || 1 });
@@ -174,7 +248,7 @@ function refreshMap() {
     const vp = visibleProject();
     map.getSource('points').setData(buildPoints(vp, state.sel));
     map.getSource('cables').setData(buildCableLines(vp, state.sel));
-    map.getSource('net3d').setData(build3D(vp, state.sel, Number(prefs.scale3d) || 3));
+    map.getSource('net3d').setData(build3D(vp, state.sel, Number(prefs.scale3d) || 3, googleActive() ? Number(prefs.googleZ) || 0 : 0));
     map.getSource('refs').setData(buildRefs(store.project));
     refreshDraft();
     refreshHandles();
@@ -305,6 +379,7 @@ map.on('click', (ev) => {
   }
   if (t === 'cable' || t === 'drop') { addDraftPoint(p, ll); return; }
   if (t === 'measure') { state.measure.push(ll); renderBanner(); refreshDraft(); }
+  if (t === 'streetview') { const hit = pickAt(p); const e = hit?.type === 'el' ? store.el(hit.id) : null; openStreetView(e ? [e.lng, e.lat] : ll, e?.name); }
 });
 
 map.on('dblclick', (ev) => {
@@ -457,6 +532,7 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'K') setTool('cable');
   else if (k === 'D') setTool('drop');
   else if (k === 'N') setTool('measure');
+  else if (k === 'S') setTool('streetview');
   else {
     const kind = KIND_ORDER.find((x) => KINDS[x].key === k);
     if (kind) setTool(`add:${kind}`);
@@ -512,6 +588,11 @@ function renderBanner() {
     clear(banner, h('span', { class: 'swatch', style: { background: KINDS[k].color } }), h('b', null, `Adicionar ${KINDS[k].label}`),
       h('span', { class: 'muted' }, ['cto', 'ceo', 'reserva'].includes(k) ? 'clique no mapa — perto de um poste, encaixa nele' : 'clique no mapa'),
       h('button', { class: 'btn xs', onclick: () => setTool('select') }, 'Concluir (Esc)'));
+    return;
+  }
+  if (t === 'streetview') {
+    clear(banner, h('b', null, 'Street View'), h('span', { class: 'muted' }, 'clique em uma rua ou elemento para ver a foto real no painel'),
+      h('button', { class: 'btn xs', onclick: () => setTool('select') }, 'Sair (Esc)'));
     return;
   }
   if (t === 'measure') {
@@ -630,7 +711,8 @@ function renderElementProps(e) {
   }
   parts.push(h('h4', null, 'Observações'), bindInput(P, 'obs', { type: 'textarea' }));
   if (P.kml && Object.keys(P.kml).length) parts.push(h('details', null, h('summary', { class: 'muted' }, 'Dados do KML de origem'), h('table', null, h('tbody', null, Object.entries(P.kml).map(([k, v2]) => h('tr', null, h('td', null, k), h('td', null, String(v2))))))));
-  parts.push(h('h4', null, 'Localização'), h('p', { class: 'muted' }, `${e.lat.toFixed(6)}, ${e.lng.toFixed(6)}`), googleLinks(e.lat, e.lng),
+  parts.push(h('h4', null, 'Localização'), h('p', { class: 'muted' }, `${e.lat.toFixed(6)}, ${e.lng.toFixed(6)}`),
+    h('button', { class: 'btn primary', style: { marginBottom: '6px' }, onclick: () => openStreetView([e.lng, e.lat], e.name) }, 'Street View neste ponto'), googleLinks(e.lat, e.lng),
     h('div', { class: 'row', style: { marginTop: '14px' } },
       h('button', { class: 'btn', onclick: () => map.flyTo({ center: [e.lng, e.lat], zoom: 19, pitch: 65 }) }, 'Centralizar'),
       h('button', { class: 'btn danger', onclick: deleteSelection }, 'Excluir')));
@@ -709,7 +791,8 @@ function toolsTab() {
     h('h4', null, 'Edição'),
     h('div', { class: 'tool-grid' },
       toolBtn('select', 'Selecionar / mover', null, 'V'),
-      toolBtn('measure', 'Medir distância', null, 'N')),
+      toolBtn('measure', 'Medir distância', null, 'N'),
+      toolBtn('streetview', 'Street View', '#facc15', 'S')),
     h('h4', null, 'Cabos'),
     h('div', { class: 'tool-grid' },
       toolBtn('cable', 'Lançar cabo', CABLE_TYPES[prefs.cableTipo].color, 'K'),
@@ -736,7 +819,18 @@ function layersTab() {
   const toggleIn = (arr, key, on) => { const s = new Set(prefs[arr]); on ? s.delete(key) : s.add(key); prefs[arr] = [...s]; savePrefs(); refreshMap(); };
   const exag = h('input', { type: 'range', min: 1, max: 3, step: 0.1, value: prefs.exaggeration, oninput: (e) => { prefs.exaggeration = Number(e.target.value); savePrefs(); applyTerrain(); } });
   const scale = h('input', { type: 'range', min: 1, max: 8, step: 0.5, value: prefs.scale3d, oninput: (e) => { prefs.scale3d = Number(e.target.value); savePrefs(); refreshMap(); } });
+  const keyInp = h('input', { type: 'password', placeholder: siteConfig.googleMapsKey ? 'definida no servidor (config.json)' : 'AIza…', value: prefs.googleKey, autocomplete: 'off' });
+  const mlyInp = h('input', { type: 'password', placeholder: siteConfig.mapillaryToken ? 'definido no servidor (config.json)' : 'MLY|…', value: prefs.mapillaryToken, autocomplete: 'off' });
+  const zRange = h('input', { type: 'range', min: -30, max: 30, step: 0.5, value: prefs.googleZ, oninput: (e) => { prefs.googleZ = Number(e.target.value); zLabel.textContent = `${prefs.googleZ} m`; savePrefs(); refreshMap(); } });
+  const zLabel = h('b', null, `${prefs.googleZ} m`);
   return [
+    h('h4', null, 'Modo realista (Google)'),
+    check('Prédios, postes e árvores reais em 3D (Google Photorealistic 3D)', prefs.google3d, (v2) => {
+      if (v2 && !googleKey()) { toast('Cadastre a chave do Google em "Chaves de API" abaixo.', 'warn'); renderTab(); return; }
+      prefs.google3d = v2; savePrefs(); applyGoogleMode(); renderTab();
+    }),
+    prefs.google3d ? field('Altura da rede sobre o modelo do Google', h('div', { class: 'row' }, zRange, zLabel), 'Se os cabos ficarem enterrados ou flutuando, ajuste aqui (o modelo do Google tem relevo próprio).') : null,
+    h('p', { class: 'muted' }, 'No modo realista o mapa OSM, o satélite e o relevo ficam ocultos (o Google não permite misturar). Use a tecla S para abrir o Street View em qualquer ponto.'),
     h('h4', null, 'Mapa base'),
     check('Imagem de satélite', prefs.satellite, (v2) => { prefs.satellite = v2; savePrefs(); map.setLayoutProperty('sat', 'visibility', v2 ? 'visible' : 'none'); }),
     check('Prédios 3D (OpenStreetMap)', prefs.buildings, (v2) => { prefs.buildings = v2; savePrefs(); applyBuildings(); }),
@@ -750,7 +844,8 @@ function layersTab() {
     ...Object.entries(CABLE_TYPES).map(([k, d]) => check(`Cabos · ${d.label} (${p.cables.filter((c) => c.props.tipo === k).length})`, !prefs.hiddenCables.includes(k), (on) => toggleIn('hiddenCables', k, on), d.color)),
     h('h4', null, 'Dados da cidade (OpenStreetMap)'),
     h('div', { class: 'row' },
-      h('button', { class: 'btn', onclick: loadOsmPoles }, 'Importar postes da área visível'),
+      h('button', { class: 'btn', onclick: loadOsmPoles }, 'Postes do OSM na área visível'),
+      h('button', { class: 'btn', onclick: loadMapillaryPoles }, 'Postes reais (Mapillary)'),
       h('button', { class: 'btn', onclick: loadBairros }, 'Bairros de Cubatão')),
     h('div', { id: 'bairros' }),
     h('h4', null, `Camadas de referência (${p.refs.length})`),
@@ -763,6 +858,15 @@ function layersTab() {
     h('div', { class: 'row' },
       h('button', { class: 'btn', onclick: importReference }, '+ Referência KML/KMZ/GeoJSON'),
       h('button', { class: 'btn', onclick: addOverlay }, '+ Imagem de planta')),
+    h('h4', null, 'Chaves de API'),
+    field('Google Maps Platform', keyInp, 'Ative "Map Tiles API" (3D) e "Maps Embed API" (Street View) e restrinja a chave ao domínio mapa.noc.updown.com.br.'),
+    field('Mapillary (token de cliente)', mlyInp, 'Gratuito em mapillary.com/dashboard/developers — usado para postes detectados nas fotos de rua.'),
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => {
+      prefs.googleKey = keyInp.value.trim(); prefs.mapillaryToken = mlyInp.value.trim(); savePrefs();
+      if (googleActive()) { disableGoogle3D(map); prefs.google3d = !!googleKey(); applyGoogleMode(); }
+      toast('Chaves salvas neste navegador.');
+      renderTab();
+    } }, 'Salvar chaves')),
   ];
 }
 
@@ -855,6 +959,37 @@ async function loadOsmPoles() {
     toast(n ? `${n} postes importados do OpenStreetMap.` : 'Nenhum poste novo mapeado no OSM nesta área — desenhe-os com a ferramenta Poste.', n ? 'info' : 'warn', 6000);
   } catch (err) {
     toast(`Falha ao consultar o OpenStreetMap: ${err.message}`, 'error');
+  }
+}
+
+// postes reconhecidos automaticamente nas fotos de rua do Mapillary
+async function loadMapillaryPoles() {
+  const tok = mapillaryToken();
+  if (!tok) { toast('Cadastre o token do Mapillary em Camadas → Chaves de API.', 'warn'); return; }
+  if (map.getZoom() < 15.5) { toast('Aproxime o mapa (zoom 15,5+) para buscar os postes de uma área.', 'warn'); return; }
+  const b = map.getBounds();
+  toast('Buscando postes detectados pelo Mapillary…');
+  try {
+    const url = `${SOURCES.mapillary}?access_token=${encodeURIComponent(tok)}&fields=id,object_value,geometry,last_seen_at&object_values=object--support--utility-pole,object--support--pole&bbox=${[b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((x) => x.toFixed(6)).join(',')}&limit=2000`;
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error?.message || `HTTP ${r.status}`);
+    const existing = store.project.elements.filter((e) => e.kind === 'poste');
+    store.checkpoint();
+    let n = 0;
+    for (const f of j.data || []) {
+      const pos = f.geometry?.coordinates;
+      if (!pos || existing.some((e) => dist([e.lng, e.lat], pos) < 3)) continue;
+      const e = makeElement('poste', pos);
+      e.props.mapillary = f.id;
+      e.props.obs = `Detectado pelo Mapillary${f.last_seen_at ? ` (visto em ${new Date(f.last_seen_at).toLocaleDateString('pt-BR')})` : ''}`;
+      existing.push(e);
+      n++;
+    }
+    store.changed();
+    toast(n ? `${n} postes reais importados do Mapillary.` : 'Nenhum poste novo detectado nesta área (o Mapillary pode não ter fotos aqui).', n ? 'info' : 'warn', 7000);
+  } catch (err) {
+    toast(`Falha ao consultar o Mapillary: ${err.message}`, 'error', 7000);
   }
 }
 
@@ -1082,6 +1217,11 @@ const viewBtn = document.getElementById('btn-view');
 viewBtn.onclick = () => {
   const is3d = map.getPitch() > 5;
   map.easeTo({ pitch: is3d ? 0 : 62, bearing: is3d ? 0 : -25, duration: 800 });
+};
+document.getElementById('btn-sv').onclick = () => setTool(state.tool === 'streetview' ? 'select' : 'streetview');
+document.getElementById('btn-real').onclick = () => {
+  if (!googleKey()) { state.tab = 'layers'; for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x.dataset.tab === 'layers'); renderTab(); toast('Cadastre a chave do Google em "Chaves de API" (aba Camadas).', 'warn'); return; }
+  prefs.google3d = !prefs.google3d; savePrefs(); applyGoogleMode(); if (state.tab === 'layers') renderTab();
 };
 map.on('pitchend', () => { viewBtn.textContent = map.getPitch() > 5 ? '2D' : '3D'; });
 viewBtn.textContent = map.getPitch() > 5 ? '2D' : '3D';

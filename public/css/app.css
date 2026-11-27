@@ -29,9 +29,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #map-wrap { position: relative; min-width: 0; }
 #map { position: absolute; inset: 0; }
 #banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(17, 24, 39, .94); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 120px); box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+#banner[hidden] { display: none; }
 #status { position: absolute; bottom: 0; left: 0; right: 0; z-index: 4; background: rgba(15, 23, 42, .85); color: var(--muted); font-size: 12px; padding: 3px 10px; display: flex; gap: 18px; pointer-events: none; }
 .maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left { bottom: 22px; }
 
+#g-credits { position: absolute; left: 10px; bottom: 52px; z-index: 4; background: rgba(255,255,255,.9); color: #3c4043; font-size: 11px; padding: 2px 8px; border-radius: 4px; max-width: 60%; }
+#g-credits b { font-family: "Product Sans", Arial, sans-serif; font-size: 13px; letter-spacing: -.2px; color: #4285f4; }
+#sv { position: absolute; right: 54px; bottom: 30px; z-index: 6; width: min(560px, calc(100% - 80px)); height: min(380px, 55%); min-width: 280px; min-height: 200px; resize: both; overflow: hidden; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+#sv[hidden] { display: none; }
+.sv-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.sv-head .muted { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+#sv iframe { flex: 1; border: 0; width: 100%; background: #000; }
 #right { width: 360px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 #right[hidden] { display: none; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--line); }

@@ -45,7 +45,7 @@ export function buildCableLines(project, sel) {
 }
 
 // alturas reais em metros; "s" exagera a espessura dos objetos pequenos para ficarem visíveis
-export function build3D(project, sel, s = 3) {
+export function build3D(project, sel, s = 3, z = 0) {
   const out = [];
   const byId = new Map(project.elements.map((e) => [e.id, e]));
 
@@ -102,6 +102,7 @@ export function build3D(project, sel, s = 3) {
       }
     }
   }
+  if (z) for (const f of out) { f.properties.base = Math.max(0, f.properties.base + z); f.properties.top = Math.max(0.05, f.properties.top + z); }
   return { type: 'FeatureCollection', features: out };
 }
 

@@ -11,8 +11,9 @@ mapa.noc.updown.com.br {
 		Referrer-Policy "same-origin"
 		X-Frame-Options "DENY"
 		# Fontes externas do mapa: OpenFreeMap (ruas/prédios), Esri (satélite), AWS (relevo),
-		# Overpass (postes/bairros OSM), IBGE (limite municipal), Nominatim (busca de endereço)
-		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; child-src 'self' blob:; img-src 'self' data: blob: https://tiles.openfreemap.org https://server.arcgisonline.com https://s3.amazonaws.com; connect-src 'self' https://tiles.openfreemap.org https://server.arcgisonline.com https://s3.amazonaws.com https://overpass-api.de https://servicodados.ibge.gov.br https://nominatim.openstreetmap.org; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		# Overpass (postes/bairros OSM), IBGE (limite municipal), Nominatim (busca de endereço),
+		# Google (3D fotorrealista e Street View), Mapillary (postes detectados)
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; child-src 'self' blob:; img-src 'self' data: blob: https://tile.googleapis.com https://tiles.openfreemap.org https://server.arcgisonline.com https://s3.amazonaws.com; connect-src 'self' https://tile.googleapis.com https://graph.mapillary.com https://tiles.openfreemap.org https://server.arcgisonline.com https://s3.amazonaws.com https://overpass-api.de https://servicodados.ibge.gov.br https://nominatim.openstreetmap.org; font-src 'self'; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 		-Server
 	}
 
