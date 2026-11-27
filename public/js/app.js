@@ -8,6 +8,7 @@ import { cableLength, powerBudget, materials, materialsCsv } from './analysis.js
 import { openSplice } from './splice.js';
 import { h, clear, toast, modal, download, pickFile, field, select } from './ui.js';
 import { enableGoogle3D, disableGoogle3D, googleActive } from './google3d.js';
+import { showStreetPhoto, closeStreetPhoto, resizeStreetPhoto } from './streetphotos.js';
 
 /* global maplibregl */
 maplibregl.setWorkerUrl(new URL('../vendor/maplibre-gl-csp-worker.js', import.meta.url).href);
@@ -15,7 +16,7 @@ maplibregl.setWorkerUrl(new URL('../vendor/maplibre-gl-csp-worker.js', import.me
 const PREFS_KEY = 'fiber3d.prefs.v1';
 const prefs = Object.assign({
   satellite: false, terrain: true, exaggeration: 1.2, buildings: true, boundary: true, labels: true, scale3d: 3,
-  google3d: false, googleZ: 0, googleKey: '', mapillaryToken: '',
+  google3d: false, googleZ: 0, googleKey: '', mapillaryToken: '', mlyCoverage: true,
   hiddenKinds: [], hiddenCables: [], autoPoles: true, cableTipo: 'distribuicao', cableFibras: 12, cableLanc: 'aereo', view: null,
 }, (() => { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ } };
@@ -138,8 +139,10 @@ map.on('load', () => {
   }
   map.addLayer({ id: 'draft-line', type: 'line', source: 'draft', paint: { 'line-color': '#22d3ee', 'line-width': 3, 'line-dasharray': [1.5, 1] } });
   map.addLayer({ id: 'draft-pt', type: 'circle', source: 'draft', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-color': '#22d3ee', 'circle-radius': 4, 'circle-stroke-color': '#0f172a', 'circle-stroke-width': 1 } });
+  if (mapillaryToken()) addMapillaryCoverage();
   map.addSource('sv', { type: 'geojson', data: EMPTY });
-  map.addLayer({ id: 'sv', type: 'circle', source: 'sv', paint: { 'circle-color': '#facc15', 'circle-radius': 8, 'circle-stroke-color': '#0f172a', 'circle-stroke-width': 3, 'circle-pitch-alignment': 'map' } });
+  map.addLayer({ id: 'sv-dir', type: 'line', source: 'sv', filter: ['==', ['geometry-type'], 'LineString'], paint: { 'line-color': '#facc15', 'line-width': 4 } });
+  map.addLayer({ id: 'sv', type: 'circle', source: 'sv', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-color': '#facc15', 'circle-radius': 8, 'circle-stroke-color': '#0f172a', 'circle-stroke-width': 3, 'circle-pitch-alignment': 'map' } });
   map.addLayer({ id: 'handles', type: 'circle', source: 'handles', paint: { 'circle-color': '#fff', 'circle-radius': 6, 'circle-stroke-color': '#0891b2', 'circle-stroke-width': 2.5, 'circle-pitch-alignment': 'map' } });
 
   applyBuildings();
@@ -191,27 +194,107 @@ async function applyGoogleMode() {
   refreshMap();
 }
 
-/* ------------------------------------------------------------- Street View ------------------------------------------------------------ */
+/* --------------------------------------------------------- fotos de rua ----------------------------------------------------------- */
+// Ordem: Google Street View embutido (se houver chave) → Mapillary embutido (gratuito) → Street View do Google numa janela ao lado (gratuito)
 
 const sv = document.getElementById('sv');
 const svFrame = document.getElementById('sv-frame');
+const svMly = document.getElementById('sv-mly');
 const svTitle = document.getElementById('sv-title');
-document.getElementById('sv-close').onclick = () => { sv.hidden = true; svFrame.src = 'about:blank'; map.getSource('sv')?.setData(EMPTY); };
+const svGoogleBtn = document.getElementById('sv-google');
+let svLast = null;
 
-function openStreetView(lngLat, label) {
+document.getElementById('sv-close').onclick = () => {
+  sv.hidden = true;
+  svFrame.src = 'about:blank';
+  closeStreetPhoto();
+  map.getSource('sv')?.setData(EMPTY);
+};
+svGoogleBtn.onclick = () => { if (svLast) googlePopup(svLast); };
+new ResizeObserver(() => resizeStreetPhoto()).observe(sv);
+
+const gsvUrl = ([lng, lat], heading) => `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}${heading != null ? `&heading=${Math.round(heading)}` : ''}`;
+
+// janela do Google Street View reaproveitada a cada clique (site normal do Google: sem chave e sem custo)
+function googlePopup(lngLat, heading = (map.getBearing() + 360) % 360) {
+  const w = window.open(gsvUrl(lngLat, heading), 'fiber3d-streetview', 'popup,width=960,height=640');
+  if (!w) toast('O navegador bloqueou a janela do Street View. Permita pop-ups para este site.', 'warn', 7000);
+}
+
+function svMarker(lngLat, bearing) {
+  const f = [{ type: 'Feature', geometry: { type: 'Point', coordinates: lngLat }, properties: {} }];
+  if (bearing != null) {
+    const r = (bearing * Math.PI) / 180;
+    const end = [lngLat[0] + (Math.sin(r) * 18) / (111320 * Math.cos((lngLat[1] * Math.PI) / 180)), lngLat[1] + (Math.cos(r) * 18) / 110540];
+    f.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [lngLat, end] }, properties: {} });
+  }
+  map.getSource('sv')?.setData({ type: 'FeatureCollection', features: f });
+}
+
+async function openStreetView(lngLat, label) {
+  svLast = lngLat;
   const [lng, lat] = lngLat;
-  const ext = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
-  if (!googleKey()) {
-    window.open(ext, '_blank', 'noopener');
-    toast('Para ver o Street View dentro do mapa, cadastre a chave do Google em Camadas → Chaves de API.', 'warn', 7000);
+  svTitle.textContent = label || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  if (googleKey()) {
+    svMly.hidden = true; svFrame.hidden = false;
+    svFrame.src = SOURCES.streetView(googleKey(), lat, lng, (map.getBearing() + 360) % 360);
+    sv.hidden = false;
+    svMarker(lngLat);
     return;
   }
-  // olha na direção em que a câmera do mapa está apontando
-  svFrame.src = SOURCES.streetView(googleKey(), lat, lng, (map.getBearing() + 360) % 360);
-  svTitle.textContent = label || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  document.getElementById('sv-ext').href = ext;
-  sv.hidden = false;
-  map.getSource('sv')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: {} }] });
+  if (mapillaryToken()) {
+    svFrame.hidden = true; svMly.hidden = false; sv.hidden = false;
+    svTitle.textContent = 'Buscando foto mais próxima…';
+    svMarker(lngLat);
+    try {
+      const img = await showStreetPhoto(svMly, mapillaryToken(), lngLat, ({ lngLat: pos, bearing, capturedAt }) => {
+        svMarker(pos, bearing);
+        svLast = pos;
+        svTitle.textContent = `${label ? `${label} · ` : ''}foto de ${capturedAt ? new Date(capturedAt).toLocaleDateString('pt-BR') : '—'} (Mapillary)`;
+      });
+      if (!img) {
+        svTitle.textContent = 'Sem fotos do Mapillary aqui';
+        toast('O Mapillary não tem fotos perto deste ponto — abrindo o Street View do Google numa janela.', 'warn', 6000);
+        googlePopup(lngLat);
+      }
+    } catch (err) {
+      svTitle.textContent = 'Falha no Mapillary';
+      toast(`Mapillary: ${err.message}`, 'error', 7000);
+    }
+    return;
+  }
+  googlePopup(lngLat);
+  svMarker(lngLat);
+}
+
+// linhas verdes = ruas com fotos gratuitas do Mapillary
+function addMapillaryCoverage() {
+  if (map.getSource('mly')) return;
+  map.addSource('mly', { type: 'vector', tiles: [SOURCES.mapillaryTiles(mapillaryToken())], minzoom: 6, maxzoom: 14, attribution: 'Fotos de rua © Mapillary' });
+  const vis = prefs.mlyCoverage ? 'visible' : 'none';
+  map.addLayer({ id: 'mly-seq', type: 'line', source: 'mly', 'source-layer': 'sequence', layout: { visibility: vis, 'line-cap': 'round' }, paint: { 'line-color': '#05cb63', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 18, 3], 'line-opacity': 0.7 } }, 'cable-casing');
+  map.addLayer({ id: 'mly-img', type: 'circle', source: 'mly', 'source-layer': 'image', minzoom: 16, layout: { visibility: vis }, paint: { 'circle-color': '#05cb63', 'circle-radius': 3, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } }, 'cable-casing');
+}
+
+function setMlyCoverage(on) {
+  prefs.mlyCoverage = on; savePrefs();
+  if (on && mapillaryToken()) addMapillaryCoverage();
+  for (const id of ['mly-seq', 'mly-img']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+}
+
+/* ------------------------------------------------------- visual realista gratuito ------------------------------------------------------ */
+// satélite + prédios 3D + relevo + câmera inclinada (sem custo)
+function realisticPreset(on) {
+  prefs.satellite = on; prefs.buildings = true; prefs.terrain = on;
+  savePrefs();
+  if (!googleActive()) {
+    map.setLayoutProperty('sat', 'visibility', on ? 'visible' : 'none');
+    applyBuildings();
+    applyTerrain();
+  }
+  map.easeTo({ pitch: on ? 68 : 45, zoom: Math.max(map.getZoom(), on ? 17.3 : map.getZoom()), duration: 900 });
+  document.getElementById('btn-real').classList.toggle('active', on);
+  if (state.tab === 'layers') renderTab();
 }
 
 function applyTerrain() {
@@ -591,7 +674,7 @@ function renderBanner() {
     return;
   }
   if (t === 'streetview') {
-    clear(banner, h('b', null, 'Street View'), h('span', { class: 'muted' }, 'clique em uma rua ou elemento para ver a foto real no painel'),
+    clear(banner, h('b', null, 'Street View'), h('span', { class: 'muted' }, mapillaryToken() || googleKey() ? 'clique em uma rua ou elemento para ver a foto real no painel' : 'clique numa rua: o Street View do Google abre numa janela ao lado (grátis)'),
       h('button', { class: 'btn xs', onclick: () => setTool('select') }, 'Sair (Esc)'));
     return;
   }
@@ -824,13 +907,16 @@ function layersTab() {
   const zRange = h('input', { type: 'range', min: -30, max: 30, step: 0.5, value: prefs.googleZ, oninput: (e) => { prefs.googleZ = Number(e.target.value); zLabel.textContent = `${prefs.googleZ} m`; savePrefs(); refreshMap(); } });
   const zLabel = h('b', null, `${prefs.googleZ} m`);
   return [
-    h('h4', null, 'Modo realista (Google)'),
-    check('Prédios, postes e árvores reais em 3D (Google Photorealistic 3D)', prefs.google3d, (v2) => {
+    h('h4', null, 'Fotos de rua (grátis)'),
+    check('Mostrar onde há fotos do Mapillary (linhas verdes)', prefs.mlyCoverage, (v2) => { if (v2 && !mapillaryToken()) toast('Cadastre o token gratuito do Mapillary em "Chaves de API" abaixo.', 'warn'); setMlyCoverage(v2); }),
+    h('p', { class: 'muted' }, 'Tecla S: clique numa rua e a foto real aparece no painel (Mapillary). Sem token, abre o Street View do Google numa janela ao lado — sem custo.'),
+    h('h4', null, 'Google 3D fotorrealista (pago, opcional)'),
+    check('Prédios, postes e árvores reais em 3D (exige chave com faturamento)', prefs.google3d, (v2) => {
       if (v2 && !googleKey()) { toast('Cadastre a chave do Google em "Chaves de API" abaixo.', 'warn'); renderTab(); return; }
       prefs.google3d = v2; savePrefs(); applyGoogleMode(); renderTab();
     }),
     prefs.google3d ? field('Altura da rede sobre o modelo do Google', h('div', { class: 'row' }, zRange, zLabel), 'Se os cabos ficarem enterrados ou flutuando, ajuste aqui (o modelo do Google tem relevo próprio).') : null,
-    h('p', { class: 'muted' }, 'No modo realista o mapa OSM, o satélite e o relevo ficam ocultos (o Google não permite misturar). Use a tecla S para abrir o Street View em qualquer ponto.'),
+    prefs.google3d ? h('p', { class: 'muted' }, 'Neste modo o mapa OSM, o satélite e o relevo ficam ocultos (o Google não permite misturar).') : null,
     h('h4', null, 'Mapa base'),
     check('Imagem de satélite', prefs.satellite, (v2) => { prefs.satellite = v2; savePrefs(); map.setLayoutProperty('sat', 'visibility', v2 ? 'visible' : 'none'); }),
     check('Prédios 3D (OpenStreetMap)', prefs.buildings, (v2) => { prefs.buildings = v2; savePrefs(); applyBuildings(); }),
@@ -859,11 +945,12 @@ function layersTab() {
       h('button', { class: 'btn', onclick: importReference }, '+ Referência KML/KMZ/GeoJSON'),
       h('button', { class: 'btn', onclick: addOverlay }, '+ Imagem de planta')),
     h('h4', null, 'Chaves de API'),
-    field('Google Maps Platform', keyInp, 'Ative "Map Tiles API" (3D) e "Maps Embed API" (Street View) e restrinja a chave ao domínio mapa.noc.updown.com.br.'),
-    field('Mapillary (token de cliente)', mlyInp, 'Gratuito em mapillary.com/dashboard/developers — usado para postes detectados nas fotos de rua.'),
+    field('Mapillary (grátis — recomendado)', mlyInp, 'Crie uma conta e um app em mapillary.com/dashboard/developers e copie o "Client Token". Libera as fotos de rua no painel e os postes detectados.'),
+    field('Google Maps Platform (opcional, exige cartão)', keyInp, 'Só se tiver faturamento no Google Cloud: "Map Tiles API" (3D) e "Maps Embed API" (Street View embutido).'),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => {
       prefs.googleKey = keyInp.value.trim(); prefs.mapillaryToken = mlyInp.value.trim(); savePrefs();
       if (googleActive()) { disableGoogle3D(map); prefs.google3d = !!googleKey(); applyGoogleMode(); }
+      if (mapillaryToken() && prefs.mlyCoverage) addMapillaryCoverage();
       toast('Chaves salvas neste navegador.');
       renderTab();
     } }, 'Salvar chaves')),
@@ -1219,10 +1306,8 @@ viewBtn.onclick = () => {
   map.easeTo({ pitch: is3d ? 0 : 62, bearing: is3d ? 0 : -25, duration: 800 });
 };
 document.getElementById('btn-sv').onclick = () => setTool(state.tool === 'streetview' ? 'select' : 'streetview');
-document.getElementById('btn-real').onclick = () => {
-  if (!googleKey()) { state.tab = 'layers'; for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x.dataset.tab === 'layers'); renderTab(); toast('Cadastre a chave do Google em "Chaves de API" (aba Camadas).', 'warn'); return; }
-  prefs.google3d = !prefs.google3d; savePrefs(); applyGoogleMode(); if (state.tab === 'layers') renderTab();
-};
+document.getElementById('btn-real').onclick = () => realisticPreset(!(prefs.satellite && prefs.terrain));
+document.getElementById('btn-real').classList.toggle('active', prefs.satellite && prefs.terrain);
 map.on('pitchend', () => { viewBtn.textContent = map.getPitch() > 5 ? '2D' : '3D'; });
 viewBtn.textContent = map.getPitch() > 5 ? '2D' : '3D';
 

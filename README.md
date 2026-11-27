@@ -17,10 +17,15 @@ Site 100% estático (HTML + JavaScript), sem banco de dados e sem build: basta s
 - Atalhos para **Google Maps, Street View e Google Earth** no ponto selecionado
 - **Plantas**: sobreponha uma imagem (PNG/JPG) e ajuste os 4 cantos às ruas; camadas de referência KML/KMZ/GeoJSON
 
-**Modo realista (Google) e fotos de rua**
-- Botão **Realista**: prédios, postes, árvores e relevo **reais em 3D** (Google Photorealistic 3D Tiles), com a rede desenhada por cima
-- Botão **Street View** (tecla `S`): clique em qualquer rua ou elemento e a foto real abre num painel ao lado do mapa, olhando na mesma direção da câmera
+**Visual realista e fotos de rua — sem custo**
+- Botão **Realista**: satélite + prédios 3D + relevo com a câmera inclinada
+- Botão **Street View** (tecla `S`): clique numa rua ou elemento para ver a **foto real**
+  - com o token gratuito do **Mapillary**: a foto abre num painel dentro do mapa, e o mapa mostra a posição e a direção da câmera;
+    as ruas com fotos aparecem em verde
+  - sem token, ou onde o Mapillary não tem fotos: o **Google Street View** abre numa janela ao lado, reaproveitada
+    a cada clique (é o site normal do Google, sem chave e sem custo)
 - **Postes reais (Mapillary)**: importa os postes detectados automaticamente nas fotos de rua da área visível
+- Opcional, **pago**: Google Photorealistic 3D Tiles e Street View embutido, para quem tiver chave do Google Cloud com faturamento
 
 **Projeto de rede**
 - Elementos: **POP/OLT, CEO (caixa de emenda), CTO (caixa de atendimento), poste, reserva técnica, cliente/ONU** e marcador
@@ -43,29 +48,28 @@ Site 100% estático (HTML + JavaScript), sem banco de dados e sem build: basta s
 > diretamente. Se algum tipo vier classificado errado, ajuste o nome das pastas no IXC ou troque o tipo no painel
 > de propriedades.
 
-## Chaves de API (modo realista)
+## Chaves de API
 
-O mapa básico funciona sem chave. Para o modo realista:
+O mapa funciona sem nenhuma chave. As chaves só liberam extras:
 
-1. **Google** — no [Google Cloud Console](https://console.cloud.google.com/google/maps-apis), num projeto com faturamento ativo,
-   ative **Map Tiles API** (prédios 3D) e **Maps Embed API** (Street View) e crie uma chave de API.
-   Em *Restrições de aplicativo* escolha *Sites* e informe `https://mapa.noc.updown.com.br/*`;
-   em *Restrições de API* deixe só as duas APIs acima.
-   - Street View pelo Maps Embed API não é cobrado.
-   - O 3D é cobrado por sessão (cada abertura do modo realista conta uma; a sessão dura algumas horas), com uma
-     cota mensal gratuita — confira os valores atuais na página de preços do Google Maps Platform.
-2. **Mapillary** (opcional) — crie um app em https://www.mapillary.com/dashboard/developers e copie o *Client Token*.
+| Chave | Custo | Libera |
+|---|---|---|
+| **Mapillary** (recomendada) | grátis, sem cartão | fotos de rua dentro do mapa, ruas com foto em verde, postes detectados |
+| Google Maps Platform | exige cartão/faturamento | prédios 3D fotorrealistas e Street View embutido |
+
+**Mapillary**: crie uma conta em https://www.mapillary.com, abra https://www.mapillary.com/dashboard/developers,
+clique em *Register application* (nome “Fiber 3D”, marque a permissão de leitura) e copie o **Client Token** (começa com `MLY|`).
 
 Para a equipe toda usar as mesmas chaves, crie no servidor o arquivo `public/config.json` (ele fica fora do git):
 ```bash
 sudo cp /opt/mapaprov/deploy/config.example.json /opt/mapaprov/public/config.json && sudo nano /opt/mapaprov/public/config.json
 ```
-Também é possível digitar as chaves em *Camadas → Chaves de API* (ficam só naquele navegador).
+Deixe vazio (`""`) o que não for usar. Também é possível digitar as chaves em *Camadas → Chaves de API*
+(ficam só naquele navegador).
 
-> A qualidade e a data das imagens dependem da cobertura do Google e do Mapillary em cada rua de Cubatão.
-> No modo realista o mapa OSM, o satélite Esri e o relevo próprio ficam ocultos, porque os termos do Google não permitem
-> misturar o conteúdo deles com outros mapas base. Se os cabos aparecerem enterrados ou flutuando, ajuste
-> *Camadas → Altura da rede sobre o modelo do Google*.
+> A cobertura e a data das fotos dependem de onde o Mapillary e o Google já fotografaram em Cubatão.
+> Qualquer pessoa pode contribuir com o Mapillary gravando as ruas com o app no celular — fotos novas da equipe
+> de campo passam a aparecer no mapa.
 
 ## Uso
 

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fiber 3D · Cubatão</title>
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="vendor/mapillary.css">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -18,7 +19,7 @@
       <div class="top-actions">
         <button class="btn ghost" id="btn-undo" title="Desfazer (Ctrl+Z)">↶</button>
         <button class="btn ghost" id="btn-redo" title="Refazer (Ctrl+Y)">↷</button>
-        <button class="btn ghost" id="btn-real" title="Modo realista: prédios e ruas reais em 3D (Google)">Realista</button>
+        <button class="btn ghost" id="btn-real" title="Visual realista: satélite + prédios 3D + relevo (grátis)">Realista</button>
         <button class="btn ghost" id="btn-sv" title="Street View (S)">Street View</button>
         <button class="btn ghost" id="btn-view" title="Alternar 2D / 3D">3D</button>
       </div>
@@ -41,9 +42,10 @@
       <div id="status"></div>
       <div id="g-credits" hidden></div>
       <div id="sv" hidden>
-        <div class="sv-head"><b>Street View</b><span id="sv-title" class="muted"></span>
-          <a id="sv-ext" class="btn xs" target="_blank" rel="noopener" href="#">abrir no Google</a>
+        <div class="sv-head"><b>Foto da rua</b><span id="sv-title" class="muted"></span>
+          <button class="btn xs" id="sv-google" title="Abrir o Street View do Google numa janela ao lado (grátis)">Google Street View</button>
           <button class="btn xs" id="sv-close" title="Fechar">✕</button></div>
+        <div id="sv-mly" hidden></div>
         <iframe id="sv-frame" title="Google Street View" referrerpolicy="no-referrer-when-downgrade" allowfullscreen loading="lazy"></iframe>
       </div>
     </main>

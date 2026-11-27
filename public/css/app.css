@@ -40,6 +40,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .sv-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .sv-head .muted { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 #sv iframe { flex: 1; border: 0; width: 100%; background: #000; }
+#sv iframe[hidden], #sv-mly[hidden] { display: none; }
+#sv-mly { flex: 1; position: relative; background: #000; }
 #right { width: 360px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 #right[hidden] { display: none; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--line); }
